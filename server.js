@@ -12,7 +12,7 @@ app.use(express.urlencoded({ extended: true }));
 const db = mysql.createConnection({
     host: 'localhost',  // Replace with your host
     user: 'root',       // Replace with your MySQL username
-    password: 'passwordnimo',       // Replace with your MySQL password
+    password: 'allen2004',       // Replace with your MySQL password
     database: 'baynsil'  // Replace with your database name
   });
  
@@ -54,6 +54,14 @@ app.get('/', (req, res) => {
 
 app.get('/addlisting', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'addlisting.html'));
+});
+
+app.get('/messages', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'message.html'));
+});
+
+app.get('/messages/:seller_id', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'message.html'));
 });
 
 app.get('/success', (req, res) => {
@@ -173,6 +181,78 @@ app.post('/items/:id', (req, res) => {
     // Redirect after successful update
     res.redirect('/useritems');
   });
+});
+
+app.post('/chat/send', async (req, res) => {
+  const senderId = req.session.user.id
+  const { receiverId, content } = req.body;
+
+  if (!senderId || !receiverId || !content) {
+    return res.status(400).json({ error: 'Missing data' });
+  }
+
+  // Save to DB
+  await db.query(
+    'INSERT INTO messages (sender_id, receiver_id, content, timestamp) VALUES (?, ?, ?, NOW())',
+    [senderId, receiverId, content]
+  );
+
+  res.status(200).json({ success: true });
+});
+
+app.get('/chat/messages', async (req, res) => {
+  const senderId = req.session.user.id
+  const receiverId = req.query.receiverId;
+
+
+  if (!senderId) return res.status(401).json({ error: 'Unauthorized' });
+  if (!receiverId) return res.status(400).json({ error: 'receiverId is required' });
+
+  try {
+    const [rows] = await db.promise().query(
+      `SELECT *, ? AS current_user_id 
+      FROM messages 
+      WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+      ORDER BY timestamp ASC`,
+      [senderId, senderId, receiverId, receiverId, senderId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+app.get('/api/messages', (req, res) => {
+  const userId = req.session.user.id;
+
+  if (!userId) return res.status(401).json({ error: 'Not logged in' });
+
+const query = `
+  SELECT 
+    u.id AS user_id,
+    u.name,
+    m.content AS last_message,
+    m.timestamp AS last_timestamp,
+    m.sender_id,
+    m.receiver_id
+  FROM messages m
+  JOIN users u ON 
+    (u.id = IF(m.sender_id = ?, m.receiver_id, m.sender_id))
+  WHERE (m.sender_id = ? OR m.receiver_id = ?)
+    AND m.timestamp = (
+      SELECT MAX(m2.timestamp)
+      FROM messages m2
+      WHERE (m2.sender_id = m.sender_id AND m2.receiver_id = m.receiver_id)
+         OR (m2.sender_id = m.receiver_id AND m2.receiver_id = m.sender_id)
+    )
+  ORDER BY m.timestamp DESC
+`;
+
+db.query(query, [userId, userId, userId], (err, results) => {
+  if (err) return res.status(500).json({ error: err.message });
+  res.json(results);
+});
 });
 
 app.get('/api/listings', (req, res) => {
